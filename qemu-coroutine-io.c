@@ -94,3 +94,72 @@ int coroutine_fn qemu_co_send(int sockfd, void *buf, int len)
 
     return qemu_co_sendv(sockfd, &iov, len, 0);
 }
+
+int coroutine_fn qemu_co_readv(int fd, struct iovec *iov,
+                               int len)
+{
+    int total = 0;
+    int ret;
+    while (len) {
+        ret = readv(fd, iov, len);
+        if (ret < 0) {
+            if (errno == EAGAIN) {
+                qemu_coroutine_yield();
+                continue;
+            }
+            if (total == 0) {
+                total = -1;
+            }
+            break;
+        }
+        if (ret == 0) {
+            break;
+        }
+        total += ret, len -= ret;
+    }
+
+    return total;
+}
+
+int coroutine_fn qemu_co_writev(int sockfd, struct iovec *iov,
+                               int len)
+{
+    int total = 0;
+    int ret;
+    while (len) {
+        ret = writev(sockfd, iov, len);
+        if (ret < 0) {
+            if (errno == EAGAIN) {
+                qemu_coroutine_yield();
+                continue;
+            }
+            if (total == 0) {
+                total = -1;
+            }
+            break;
+        }
+        total += ret, len -= ret;
+    }
+
+    return total;
+}
+
+int coroutine_fn qemu_co_read(int sockfd, void *buf, int len)
+{
+    struct iovec iov;
+
+    iov.iov_base = buf;
+    iov.iov_len = len;
+
+    return qemu_co_readv(sockfd, &iov, len);
+}
+
+int coroutine_fn qemu_co_write(int sockfd, void *buf, int len)
+{
+    struct iovec iov;
+
+    iov.iov_base = buf;
+    iov.iov_len = len;
+
+    return qemu_co_writev(sockfd, &iov, len);
+}
