@@ -124,7 +124,6 @@ qemu_fuse_getattr(const char *path, struct stat *buf)
   return ret;
 }
 
-
 static int
 qemu_fuse_chown(const char *path, uid_t uid, gid_t gid)
 {
@@ -184,52 +183,52 @@ static void nbd_read(void *opaque)
 }
 
 enum  {
-        KEY_HELP,
-        KEY_VERSION,
+  KEY_HELP,
+  KEY_VERSION,
 };
 
 struct qemu_opts {
-        int readonly;
-        int snapshot;
-        int nocache;
-        char *image;
+  int readonly;
+  int snapshot;
+  int nocache;
+  char *image;
 };
 
 #define QEMU_OPT(t, p) { t, offsetof(struct qemu_opts, p), 1 }
 
 static const struct fuse_opt fuse_qemu_opts[] = {
-        QEMU_OPT("ro",           readonly),
-        QEMU_OPT("snapshot",     snapshot),
-        QEMU_OPT("no_bdrv_cache",nocache),
+  QEMU_OPT("ro",           readonly),
+  QEMU_OPT("snapshot",     snapshot),
+  QEMU_OPT("no_bdrv_cache",nocache),
 
-        FUSE_OPT_KEY("-h",              KEY_HELP),
-        FUSE_OPT_KEY("--help",          KEY_HELP),
-        FUSE_OPT_KEY("-V",              KEY_VERSION),
-        FUSE_OPT_KEY("--version",       KEY_VERSION),
-        FUSE_OPT_END
+  FUSE_OPT_KEY("ro",              FUSE_OPT_KEY_KEEP),
+  FUSE_OPT_KEY("-h",              KEY_HELP),
+  FUSE_OPT_KEY("--help",          KEY_HELP),
+  FUSE_OPT_KEY("-V",              KEY_VERSION),
+  FUSE_OPT_KEY("--version",       KEY_VERSION),
+  FUSE_OPT_END
 };
-
 
 static void usage(const char *progname)
 {
-        fprintf(stderr,
-                "usage: %s imagefile mountpoint [options]\n\n", progname);
-        fprintf(stderr,
-                "general options:\n"
-                "    -o opt,[opt...]        mount options\n"
-                "    -h   --help            print help\n"
-                "    -V   --version         print version\n"
-                "\n");
-}
+  fprintf(stderr,
+          "usage: %s imagefile mountpoint [options]\n\n", progname);
+  fprintf(stderr,
+          "general options:\n"
+          "    -o opt,[opt...]        mount options\n"
+          "    -h   --help            print help\n"
+          "    -V   --version         print version\n"
+          "\n");
+
 
 static void qemu_help(void)
 {
-        fprintf(stderr,
-                "QEMU options:\n"
-                "    -o snapshot            use snapshot file\n"
-                "    -o no_bdrv_cache       foreground operation\n"
-                "\n"
-                );
+  fprintf(stderr,
+          "QEMU options:\n"
+          "    -o snapshot            use snapshot file\n"
+          "    -o no_bdrv_cache       foreground operation\n"
+          "\n"
+          );
 }
 
 static void qemu_version(const char *name)
@@ -245,39 +244,38 @@ static void qemu_version(const char *name)
 static int fuse_qemu_opt_proc(void *data, const char *arg, int key,
                                 struct fuse_args *outargs)
 {
-        struct qemu_opts *qopts = data;
+  struct qemu_opts *qopts = data;
 
-        switch (key) {
-        case KEY_HELP:
-                usage(outargs->argv[0]);
-                /* fall through */
-                qemu_help();
-                // KEY_HELP_NOHEADER for helper
-                return fuse_opt_add_arg(outargs, "-ho");
+  switch (key) {
+  case KEY_HELP:
+    usage(outargs->argv[0]);
+    /* fall through */
+    qemu_help();
+    // KEY_HELP_NOHEADER for helper
+    return fuse_opt_add_arg(outargs, "-ho");
 
-        case KEY_VERSION:
-                qemu_version(outargs->argv[0]);
-                return 1;
+  case KEY_VERSION:
+    qemu_version(outargs->argv[0]);
+    return 1;
 
-        case FUSE_OPT_KEY_NONOPT:
-                if (!qopts->image) {
-                        char image[PATH_MAX];
-                        if (realpath(arg, image) == NULL) {
-                                fprintf(stderr,
-                                        "fuse: bad image file `%s': %s\n",
-                                        arg, strerror(errno));
-                                return -1;
-                        }
-                        return fuse_opt_add_opt(&qopts->image, image);
-                } else {
-                        return 1;
-                }
+  case FUSE_OPT_KEY_NONOPT:
+    if (!qopts->image) {
+      char image[PATH_MAX];
+      if (realpath(arg, image) == NULL) {
+        fprintf(stderr,
+                "fuse: bad image file `%s': %s\n",
+                arg, strerror(errno));
+        return -1;
+      }
+      return fuse_opt_add_opt(&qopts->image, image);
+    } else {
+      return 1;
+    }
 
-        default:
-                return 1;
-        }
+  default:
+    return 1;
+  }
 }
-
 
 int main(int argc, char **argv)
 {
@@ -297,7 +295,6 @@ int main(int argc, char **argv)
     exit(EXIT_FAILURE);
 
   memset(&ctx, 0, sizeof(ctx));
-  // 使ってほしくないとしか思えないインタフェースである。
   fuse = fuse_setup(args.argc, args.argv, &qemu_fuse_operations, sizeof(qemu_fuse_operations), &mountpoint, NULL, &ctx);
   if (fuse == NULL)
     exit(EXIT_FAILURE);
@@ -339,7 +336,6 @@ int main(int argc, char **argv)
   }while (!fuse_session_exited(se));
 
 
-  // fuse も mountpoint も free される。ひどい話である。
   fuse_teardown(fuse, mountpoint);
   exit(EXIT_SUCCESS);
 }
