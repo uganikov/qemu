@@ -163,7 +163,7 @@ static struct fuse_operations qemu_fuse_operations = {
   .chmod = qemu_fuse_chmod,
 };
 
-static void nbd_trip(void *opaque)
+static void fuse_trip(void *opaque)
 {
   int res;
   struct fuse_chan *ch = (struct fuse_chan*)opaque;
@@ -176,10 +176,10 @@ static void nbd_trip(void *opaque)
     fuse_session_process(fuse_chan_session(ch), buf, res, ch);
 }
 
-static void nbd_read(void *opaque)
+static void fuse_read(void *opaque)
 {
   struct fuse_chan *ch = opaque;
-  qemu_coroutine_enter(qemu_coroutine_create(nbd_trip), ch);
+  qemu_coroutine_enter(qemu_coroutine_create(fuse_trip), ch);
 }
 
 enum  {
@@ -219,7 +219,7 @@ static void usage(const char *progname)
           "    -h   --help            print help\n"
           "    -V   --version         print version\n"
           "\n");
-
+}
 
 static void qemu_help(void)
 {
@@ -329,7 +329,7 @@ int main(int argc, char **argv)
 
   se = fuse_get_session(fuse);
   ch = fuse_session_next_chan(se, NULL);
-  qemu_set_fd_handler2(fuse_chan_fd(ch), NULL, nbd_read, NULL, ch);
+  qemu_set_fd_handler2(fuse_chan_fd(ch), NULL, fuse_read, NULL, ch);
 
   do {
     main_loop_wait(false);
