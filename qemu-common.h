@@ -325,31 +325,6 @@ int qemu_co_send(int sockfd, void *buf, int len);
  */
 int qemu_co_recv(int sockfd, void *buf, int len);
 
-/**
- * Sends an iovec (or optionally a part of it) down a socket, yielding
- * when the socket is full.
- */
-int qemu_co_writev(int sockfd, struct iovec *iov,
-                  int len);
-
-/**
- * Receives data into an iovec (or optionally into a part of it) from
- * a socket, yielding when there is no data in the socket.
- */
-int qemu_co_readv(int sockfd, struct iovec *iov,
-                  int len);
-
-
-/**
- * Sends a buffer down a socket, yielding when the socket is full.
- */
-int qemu_co_write(int sockfd, void *buf, int len);
-
-/**
- * Receives data into a buffer from a socket, yielding when there
- * is no data in the socket.
- */
-int qemu_co_read(int sockfd, void *buf, int len);
 
 typedef struct QEMUIOVector {
     struct iovec *iov;
