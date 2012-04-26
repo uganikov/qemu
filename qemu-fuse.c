@@ -14,6 +14,12 @@ typedef struct _qemu_ctx {
   size_t size;
 }qemu_ctx;
 
+typedef struct _fuse_chan_ctx {
+  struct fuse_chan* orig;
+  CoMutex send_lock;
+  Coroutine *send_coroutine;
+}fuse_chan_ctx;
+
 static int
 qemu_fuse_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
 {
@@ -277,6 +283,125 @@ static int fuse_qemu_opt_proc(void *data, const char *arg, int key,
   }
 }
 
+static int fuse_qemu_chan_receive(struct fuse_chan **chp, char *buf,
+                                  size_t size)
+{
+        struct fuse_chan *ch = *chp;
+        int err;
+        ssize_t res;
+        struct fuse_session *se = fuse_chan_session(ch);
+        assert(se != NULL);
+
+restart:
+        res = read(fuse_chan_fd(ch), buf, size);
+        err = errno;
+
+        if (fuse_session_exited(se))
+                return 0;
+        if (res == -1) {
+                /* ENOENT means the operation was interrupted, it's safe
+                   to restart */
+                if (err == ENOENT || err == EAGAIN){
+//                        qemu_coroutine_yield();
+                        goto restart;
+                }
+
+                if (err == ENODEV) {
+                        fuse_session_exit(se);
+                        return 0;
+                }
+                /* Errors occuring during normal operation: EINTR (read
+                   interrupted), EAGAIN (nonblocking I/O), ENODEV (filesystem
+                   umounted) */
+                if (err != EINTR)
+                        perror("fuse: reading device");
+                return -err;
+        }
+        if ((size_t) res < sizeof(struct fuse_in_header)) {
+                fprintf(stderr, "short read on fuse device\n");
+                return -EIO;
+        }
+        return res;
+}
+
+static void fuse_restart_write(void *opaque)
+{
+    struct fuse_chan*  ch = (struct fuse_chan*)opaque;
+    fuse_chan_ctx *ctx = (fuse_chan_ctx*)fuse_chan_data(ch);
+
+    qemu_coroutine_enter(ctx->send_coroutine, NULL);
+}
+
+static int coroutine_fn qemu_co_writev(int sockfd, struct iovec *iov, int iovlen)
+{
+    int i;
+    int total = 0;
+    int ret;
+    for (i =0 ; i < iovlen; i++) {
+        ret = writev(sockfd, iov, iovlen);
+        if (ret < 0) {
+            if (errno == EAGAIN) {
+                qemu_coroutine_yield();
+                continue;
+            }
+            if (total == 0) {
+                total = -1;
+            }
+            break;
+        }
+        total += ret;
+    }
+
+    return total;
+}
+
+static int fuse_qemu_chan_send(struct fuse_chan *ch, const struct iovec iov[],
+                               size_t count)
+{
+        if (iov) {
+                ssize_t res;
+                fuse_chan_ctx* ctx = (fuse_chan_ctx*)fuse_chan_data(ch);
+
+                qemu_co_mutex_lock(&ctx->send_lock);
+                qemu_set_fd_handler2(fuse_chan_fd(ch), NULL, fuse_read, fuse_restart_write, ch);
+                ctx->send_coroutine = qemu_coroutine_self();
+ 
+                res = qemu_co_writev(fuse_chan_fd(ch), (struct iovec*)iov, count);
+//                res = writev(fuse_chan_fd(ch), iov, count);
+                int err = errno;
+
+                if (res == -1) {
+                        struct fuse_session *se = fuse_chan_session(ch);
+
+                        assert(se != NULL);
+
+                        /* ENOENT means the operation was interrupted */
+                        if (!fuse_session_exited(se) && err != ENOENT)
+                                perror("fuse: writing device");
+                        return -err;
+                }
+
+                ctx->send_coroutine = NULL;
+                qemu_set_fd_handler2(fuse_chan_fd(ch), NULL, fuse_read, NULL, ch);
+
+                qemu_co_mutex_unlock(&ctx->send_lock);
+
+        }
+        return 0;
+}
+
+static void fuse_qemu_chan_destroy(struct fuse_chan *ch)
+{
+  fuse_chan_ctx *ctx = (fuse_chan_ctx*)fuse_chan_data(ch);
+  fuse_chan_destroy(ctx->orig);
+}
+
+struct fuse_chan_ops qemu_chan_op = {
+  .receive = fuse_qemu_chan_receive,
+  .send = fuse_qemu_chan_send,
+  .destroy = fuse_qemu_chan_destroy,
+};
+
 int main(int argc, char **argv)
 {
   int ret;
@@ -288,6 +413,7 @@ int main(int argc, char **argv)
   struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
   struct qemu_opts qopts;
   qemu_ctx ctx;
+  fuse_chan_ctx chan_ctx;
 
   memset(&qopts, 0, sizeof(qopts));
   ret = fuse_opt_parse(&args, &qopts, fuse_qemu_opts, fuse_qemu_opt_proc);
@@ -295,6 +421,7 @@ int main(int argc, char **argv)
     exit(EXIT_FAILURE);
 
   memset(&ctx, 0, sizeof(ctx));
+  memset(&chan_ctx, 0, sizeof(chan_ctx));
   fuse = fuse_setup(args.argc, args.argv, &qemu_fuse_operations, sizeof(qemu_fuse_operations), &mountpoint, NULL, &ctx);
   if (fuse == NULL)
     exit(EXIT_FAILURE);
@@ -324,17 +451,22 @@ int main(int argc, char **argv)
   ctx.size *= BDRV_SECTOR_SIZE;
   ctx.backing_file = open(qopts.image,O_RDONLY);
   ctx.backing_file_name = strdup(basename(qopts.image));
+  qemu_co_mutex_init(&chan_ctx.send_lock);
+  
   free(qopts.image);
   fuse_opt_free_args(&args);
 
   se = fuse_get_session(fuse);
-  ch = fuse_session_next_chan(se, NULL);
+  chan_ctx.orig = fuse_session_next_chan(se, NULL);
+
+  fuse_session_remove_chan(chan_ctx.orig);
+  ch = fuse_chan_new(&qemu_chan_op, fuse_chan_fd(chan_ctx.orig), fuse_chan_bufsize(chan_ctx.orig), &chan_ctx);
+  fuse_session_add_chan(se, ch);
   qemu_set_fd_handler2(fuse_chan_fd(ch), NULL, fuse_read, NULL, ch);
 
   do {
     main_loop_wait(false);
   }while (!fuse_session_exited(se));
-
 
   fuse_teardown(fuse, mountpoint);
   exit(EXIT_SUCCESS);
